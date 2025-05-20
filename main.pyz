@@ -1,0 +1,228 @@
+import pygame
+import random
+from queue import PriorityQueue
+
+# Initialize pygame
+pygame.init()
+
+# Game constants
+WIDTH, HEIGHT = 800, 800
+GRID_SIZE = 20
+GRID_WIDTH = WIDTH // GRID_SIZE
+GRID_HEIGHT = HEIGHT // GRID_SIZE
+FPS = 15
+
+# Colors
+BLACK = (0, 0, 0)
+WHITE = (255, 255, 255)
+BLUE = (0, 0, 255)
+YELLOW = (255, 255, 0)
+RED = (255, 0, 0)
+
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Enhanced Pac-Man Maze")
+clock = pygame.time.Clock()
+
+class Node:
+    def __init__(self, row, col):
+        self.row = row
+        self.col = col
+        self.neighbors = []
+        self.wall = False
+
+    def get_pos(self): return (self.row, self.col)
+    def make_wall(self): self.wall = True
+    def is_wall(self): return self.wall
+
+    def update_neighbors(self, grid):
+        self.neighbors = []
+        directions = [(1,0), (-1,0), (0,1), (0,-1)]
+        for dr, dc in directions:
+            nr, nc = self.row + dr, self.col + dc
+            if 0 <= nr < GRID_HEIGHT and 0 <= nc < GRID_WIDTH:
+                if not grid[nr][nc].is_wall():
+                    self.neighbors.append(grid[nr][nc])
+
+def make_grid():
+    grid = [[Node(i,j) for j in range(GRID_WIDTH)] for i in range(GRID_HEIGHT)]
+
+    # Complex wall pattern
+    patterns = [
+        # Horizontal barriers
+        [(10, j) for j in range(5, 16)],
+        [(5, j) for j in range(2, 18)],
+        [(15, j) for j in range(2, 18)],
+
+        # Vertical barriers
+        [(i, 10) for i in range(5, 16)],
+        [(i, 5) for i in range(2, 18)],
+        [(i, 15) for i in range(2, 18)],
+
+        # Diagonal walls
+        [(i, i) for i in range(7, 13)],
+        [(i, 20-i) for i in range(7, 13)],
+
+        # Checkered pattern
+        [(i, j) for i in range(3, 18, 3) for j in range(3, 18, 3)],
+
+        # Random walls (20% of remaining space) - CORRECTED LINE
+        [(random.randint(1, GRID_HEIGHT-2), random.randint(1, GRID_WIDTH-2))
+         for _ in range(int(GRID_WIDTH*GRID_HEIGHT*0.2))]
+    ]
+
+    for pattern in patterns:
+        for pos in pattern:
+            row, col = pos
+            if 0 <= row < GRID_HEIGHT and 0 <= col < GRID_WIDTH:
+                grid[row][col].make_wall()
+
+    # Border walls
+    for i in range(GRID_HEIGHT):
+        grid[i][0].make_wall()
+        grid[i][GRID_WIDTH-1].make_wall()
+    for j in range(GRID_WIDTH):
+        grid[0][j].make_wall()
+        grid[GRID_HEIGHT-1][j].make_wall()
+
+    return grid
+
+def create_diagonal_coins(grid):
+    coins = []
+    for i in range(2, GRID_HEIGHT-2, 3):
+        for j in range(2, GRID_WIDTH-2, 3):
+            if (i + j) % 2 == 0 and not grid[i][j].is_wall():
+                if random.random() < 0.7:
+                    coins.append((i, j))
+            elif not grid[i][j].is_wall():
+                if random.random() < 0.3:
+                    coins.append((i, j))
+    return coins
+
+def draw(screen, grid, pacman, monsters, coins):
+    screen.fill(BLACK)
+
+    # Draw walls
+    for row in grid:
+        for node in row:
+            if node.is_wall():
+                pygame.draw.rect(screen, BLUE,
+                               (node.col*GRID_SIZE, node.row*GRID_SIZE,
+                                GRID_SIZE, GRID_SIZE))
+
+    # Draw diagonal coins
+    for coin in coins:
+        pygame.draw.circle(screen, WHITE,
+                         (coin[1]*GRID_SIZE + GRID_SIZE//2,
+                          coin[0]*GRID_SIZE + GRID_SIZE//2),
+                         GRID_SIZE//5)
+
+    # Draw characters
+    pygame.draw.rect(screen, YELLOW, (pacman[1]*GRID_SIZE, pacman[0]*GRID_SIZE,
+                                   GRID_SIZE, GRID_SIZE))
+    for monster in monsters:
+        pygame.draw.rect(screen, RED, (monster[1]*GRID_SIZE, monster[0]*GRID_SIZE,
+                                    GRID_SIZE, GRID_SIZE))
+
+    pygame.display.update()
+
+def h(p1, p2): return abs(p1[0]-p2[0]) + abs(p1[1]-p2[1])
+
+def a_star(grid, start, end):
+    count = 0
+    open_set = PriorityQueue()
+    open_set.put((0, count, start))
+    came_from = {}
+    g_score = {node: float('inf') for row in grid for node in row}
+    g_score[start] = 0
+    f_score = {node: float('inf') for row in grid for node in row}
+    f_score[start] = h(start.get_pos(), end.get_pos())
+
+    open_set_hash = {start}
+
+    while not open_set.empty():
+        current = open_set.get()[2]
+        open_set_hash.remove(current)
+
+        if current == end:
+            path = []
+            while current in came_from:
+                path.append(current.get_pos())
+                current = came_from[current]
+            return path[::-1]
+
+        for neighbor in current.neighbors:
+            temp_g = g_score[current] + 1
+            if temp_g < g_score[neighbor]:
+                came_from[neighbor] = current
+                g_score[neighbor] = temp_g
+                f_score[neighbor] = temp_g + h(neighbor.get_pos(), end.get_pos())
+                if neighbor not in open_set_hash:
+                    count += 1
+                    open_set.put((f_score[neighbor], count, neighbor))
+                    open_set_hash.add(neighbor)
+
+    return []
+
+def main():
+    grid = make_grid()
+    pacman = (GRID_HEIGHT//2, GRID_WIDTH//2)
+    monsters = [(5,5), (5, GRID_WIDTH-5), (GRID_HEIGHT-5,5)]
+    coins = create_diagonal_coins(grid)
+
+    for row in grid:
+        for node in row:
+            node.update_neighbors(grid)
+
+    running = True
+    while running:
+        clock.tick(FPS)
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+        # Pac-Man movement
+        keys = pygame.key.get_pressed()
+        new_pac = pacman
+        directions = {
+            pygame.K_UP: (-1,0),
+            pygame.K_DOWN: (1,0),
+            pygame.K_LEFT: (0,-1),
+            pygame.K_RIGHT: (0,1)
+        }
+
+        for key, (dr, dc) in directions.items():
+            if keys[key]:
+                nr, nc = pacman[0]+dr, pacman[1]+dc
+                if 0 <= nr < GRID_HEIGHT and 0 <= nc < GRID_WIDTH:
+                    if not grid[nr][nc].is_wall():
+                        new_pac = (nr, nc)
+
+        if new_pac in coins:
+            coins.remove(new_pac)
+        pacman = new_pac
+
+        # Monster movement
+        new_monsters = []
+        for monster in monsters:
+            path = a_star(grid, grid[monster[0]][monster[1]], grid[pacman[0]][pacman[1]])
+            if path and len(path) > 1:
+                new_monsters.append(path[0])
+            else:
+                new_monsters.append(monster)
+        monsters = new_monsters
+
+        if pacman in monsters:
+            print("GAME OVER!")
+            running = False
+
+        if not coins:
+            print("YOU WIN!")
+            running = False
+
+        draw(screen, grid, pacman, monsters, coins)
+
+    pygame.quit()
+
+if __name__ == "__main__":
+    main()
